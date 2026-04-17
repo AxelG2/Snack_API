@@ -7,4 +7,13 @@ TABLA_CLIENTES = """
     )
 """
 
-TABLAS = [TABLA_CLIENTES]
+TABLA_PRODUCTOS = """
+    CREATE TABLE IF NOT EXISTS Productos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        precio REAL NOT NULL,
+        stock INT NULL
+    )
+"""
+
+TABLAS = [TABLA_CLIENTES, TABLA_PRODUCTOS]
