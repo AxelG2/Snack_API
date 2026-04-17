@@ -16,7 +16,7 @@ def crear_producto(producto: ProductoCreate):
             id = cursor.lastrowid
 
             return {**producto.model_dump(), 'id': id}
-        except Exception as e:
+        except:
             raise HTTPException(400, "Error al crear el producto.")
 
 @router.get("/productos", response_model=List[ProductoResponse])
@@ -51,7 +51,6 @@ def actualizar_producto(id: int, producto_data: ProductoUpdate):
         cursor = conn.cursor()
 
         cursor.execute(f"UPDATE Productos SET {campos} WHERE id = ?", valores,)
-
 
         respuesta = conn.execute("SELECT * FROM Productos WHERE id = ?", (id,)).fetchone()
         return dict(respuesta)

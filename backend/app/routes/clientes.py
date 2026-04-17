@@ -11,16 +11,12 @@ def crear_cliente(cliente: ClienteBase):
         try:
             cursor = conn.cursor()
 
-            query = "INSERT INTO Clientes (nombre, telefono, direccion) VALUES (?, ?, ?)"
-            cursor.execute(query, (cliente.nombre, cliente.telefono, cliente.direccion,))
+            cursor.execute("INSERT INTO Clientes (nombre, telefono, direccion) VALUES (?, ?, ?)", (cliente.nombre, cliente.telefono, cliente.direccion,))
 
             id = cursor.lastrowid
 
-            conn.commit()
             return {**cliente.model_dump(), 'id': id}
-        except Exception as e:
-            print(str(e))
-            conn.rollback()
+        except:
             raise HTTPException(400, "Error al crear al cliente.")
         
 
@@ -44,8 +40,8 @@ def obtener_cliente(id: int):
 @router.delete("/clientes/{id}", status_code=204)
 def borrar_cliente(id: int):
     with conectar() as conn:
-        cursor = conn.execute("DELETE FROM Clientes WHERE id = ?", (id,))
-        conn.commit()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM Clientes WHERE id = ?", (id,))
 
         if cursor.rowcount == 0: raise HTTPException(404, "Cliente no encontrado.")
 
