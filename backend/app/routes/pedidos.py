@@ -1,4 +1,4 @@
-from ..schemas.pedido_schema import PedidoCreate, PedidoResponse
+from ..schemas.pedido_schema import PedidoCreate
 from ..database import conectar
 from fastapi import APIRouter, HTTPException
 from datetime import datetime
@@ -30,7 +30,6 @@ def crear_pedido(pedido: PedidoCreate):
                 lista_productos.append({**producto.model_dump(), 'subtotal': subtotal})
 
             cursor = conn.cursor()
-
             cursor.execute("INSERT INTO Pedidos (cliente_id, fecha, total) VALUES (?, ?, ?)", (cliente_id, datetime.now(), total,))
 
             id = cursor.lastrowid
@@ -41,35 +40,38 @@ def crear_pedido(pedido: PedidoCreate):
             return {'msg': 'Pedido creado exitosamente.', 'id': id}
         except Exception as e: raise HTTPException(500, f"Error al guardar: {str(e)}")
 
-# @router.get("/pedidos", status_code=200)
-# def obtener_pedidos():
-#     with conectar() as conn:
-#         try:
-#             pedidos = conn.execute("SELECT * FROM Pedidos").fetchall()
-#             if not pedidos: raise HTTPException(404, "No se han creado pedidos.")
-#             return pedidos
-#         except HTTPException: raise
-#         except Exception: raise HTTPException(500, "Error en la consulta.")
-
 @router.get("/pedidos", status_code=200)
 def obtener_pedidos_por_cliente(cliente_id: int):
     with conectar() as conn:
         try:
+            if not conn.execute("SELECT EXISTS(SELECT 1 FROM Clientes WHERE id = ?)", (cliente_id,)): raise HTTPException(404, "No existe el cliente.")
+
             query = """
                 SELECT dp.* FROM DetallePedido dp
                 JOIN Pedidos p ON dp.pedido_id = p.id
                 WHERE p.cliente_id = ?
             """
             pedidos = conn.execute(query, (cliente_id,)).fetchall()
+            if not pedidos: raise HTTPException(404, "No existen pedidos con este cliente.")
 
             return pedidos
         except sqlite3.Error as e: raise HTTPException(500, f"Error de base de datos: {str(e)}")
         except HTTPException: raise
         except Exception as e: raise HTTPException(500, "Error interno inesperado.")
 
-# @router.get("/pedidos/{pedido_id}", status_code=200)
-# def obtener_pedido(cliente_id: int, pedido_id: int):
-#     with conectar() as conn:
-#         try:
+@router.get("/pedidos/{pedido_id}", status_code=200)
+def obtener_pedido(cliente_id: int, pedido_id: int):
+    with conectar() as conn:
+        try:
+            query = """
+                SELECT dp.* FROM DetallePedido dp
+                JOIN Pedidos p ON dp.pedido_id = p.id
+                WHERE p.cliente_id = ? AND p.id = ?
+            """
+            pedido = conn.execute(query, (cliente_id, pedido_id,)).fetchone()
+            if not pedido: raise HTTPException(404, "Pedido no encontrado.")
 
-#         except:
+            return pedido
+        except sqlite3.Error as e: raise HTTPException(500, f"Error de base de datos: {str(e)}")
+        except HTTPException: raise
+        except Exception as e: raise HTTPException(500, "Error interno inesperado.")
