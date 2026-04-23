@@ -16,4 +16,25 @@ TABLA_PRODUCTOS = """
     )
 """
 
-TABLAS = [TABLA_CLIENTES, TABLA_PRODUCTOS]
+TABLA_PEDIDOS = """
+    CREATE TABLE IF NOT EXISTS Pedidos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cliente_id INTEGER,
+        fecha TEXT NOT NULL,
+        total REAL NOT NULL,
+        FOREIGN KEY (cliente_id) REFERENCES Clientes(id) ON DELETE CASCADE
+    )
+"""
+
+TABLA_DETALLE_PEDIDO = """
+    CREATE TABLE IF NOT EXISTS DetallePedido (
+        pedido_id INTEGER,
+        producto_id INTEGER,
+        cantidad INTEGER NOT NULL,
+        subtotal REAL NOT NULL,
+        FOREIGN KEY (pedido_id) REFERENCES Pedidos(id) ON DELETE CASCADE,
+        FOREIGN KEY (producto_id) REFERENCES Productos(id) ON DELETE CASCADE
+    )
+"""
+
+TABLAS = [TABLA_CLIENTES, TABLA_PRODUCTOS, TABLA_PEDIDOS, TABLA_DETALLE_PEDIDO]
