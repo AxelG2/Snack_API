@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from .routes import clientes, productos, pedidos
 from .database import inicializar
 import uvicorn
@@ -6,6 +7,14 @@ import uvicorn
 app = FastAPI(
     title="Snack API",
     description="API para gestionar snacks"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # En desarrollo está bien, en producción pon tu dominio
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(clientes.router, prefix="/v1", tags=["Clientes"])
@@ -19,6 +28,3 @@ def home():
 @app.on_event("startup")
 def startup_event():
     inicializar()
-
-if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)

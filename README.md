@@ -8,5 +8,5 @@ source .venv/bin/activate # Para linux
 
 pip install -r requirements.txt # Instalar dependencias
 
-python -m app.main # Correr la api
+uvicorn app.main:app --reload # Correr la api
 ```
