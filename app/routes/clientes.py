@@ -1,48 +1,51 @@
-from ..schemas.cliente_schema import ClienteBase, ClienteResponse
-from ..database import conectar
-from fastapi import APIRouter, HTTPException
+from ..schemas.cliente_schema import Cliente, ClienteCreate, ClienteUpdate
+from ..database import get_db
+from fastapi import APIRouter, HTTPException, Depends
+from sqlite3 import Connection, IntegrityError
 from typing import List
 
 router = APIRouter()
 
-@router.post("/clientes", response_model=ClienteResponse, status_code=201)
-def crear_cliente(cliente: ClienteBase):
-    with conectar() as conn:
-        try:
-            cursor = conn.cursor()
+@router.post("/", response_model=Cliente, status_code=201)
+def crear_cliente(cliente: ClienteCreate, db: Connection = Depends(get_db)):
+    try:
+        cursor = db.execute("INSERT INTO Clientes (nombre, email, telefono, direccion) VALUES (?, ?, ?, ?)", (cliente.nombre, cliente.email, cliente.telefono, cliente.direccion),)
+        db.commit()
 
-            cursor.execute("INSERT INTO Clientes (nombre, telefono, direccion) VALUES (?, ?, ?)", (cliente.nombre, cliente.telefono, cliente.direccion,))
+        fila = db.execute("SELECT * FROM Clientes WHERE id=?", (cursor.lastrowid,)).fetchone()
+        return dict(fila)
+    except IntegrityError: raise HTTPException(409, "El email ya está registrado.")
 
-            id = cursor.lastrowid
+@router.get("/", response_model=List[Cliente])
+def listar_clientes(db: Connection = Depends(get_db)):
+    clientes = db.execute("SELECT * FROM Clientes ORDER BY id").fetchall()
+    return [dict(c) for c in clientes]
 
-            return {**cliente.model_dump(), 'id': id}
-        except:
-            raise HTTPException(400, "Error al crear al cliente.")
-        
+@router.get("/{id}", response_model=Cliente)
+def obtener_cliente(id: int, db: Connection = Depends(get_db)):
+    cliente = db.execute("SELECT * FROM Clientes WHERE id=?", (id,)).fetchone()
+    if not cliente: raise HTTPException(404, "Cliente no encontrado.")
+    return dict(cliente)
 
-@router.get("/clientes", response_model=List[ClienteResponse])
-def listar_clientes():
-    with conectar() as conn:
-        clientes = conn.execute("SELECT * FROM Clientes").fetchall()
-        return [dict(c) for c in clientes]
-    
-@router.get("/clientes/{id}", response_model=ClienteResponse)
-def obtener_cliente(id: int):
-    with conectar() as conn:
-        cliente = conn.execute("SELECT * FROM Clientes WHERE id = ?", (id,)).fetchone()
+@router.patch("/{id}", response_model=Cliente)
+def actualizar_cliente(id: int, datos: ClienteUpdate, db: Connection = Depends(get_db)):
+    campos = {k: v for k, v in datos.model_dump().items() if v is not None}
+    if not campos: raise HTTPException(400, "No se enviaron campos para actualizar.")
 
-        if cliente is None: raise HTTPException(404, "Cliente no encontrado.")
+    set_clause = ", ".join(f"{k}=?" for k in campos)
 
-        return dict(cliente)
-    
-# TODO: UPDATE
+    try:
+        db.execute(f"UPDATE Clientes SET {set_clause} WHERE id=?", (*campos.values(), id))
+        db.commit()
+    except IntegrityError: raise HTTPException(409, "El email ya está en uso.")
 
-@router.delete("/clientes/{id}", status_code=204)
-def borrar_cliente(id: int):
-    with conectar() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM Clientes WHERE id = ?", (id,))
+    fila = db.execute("SELECT * FROM Clientes WHERE id=?", (id,)).fetchone()
+    if not fila: raise HTTPException(404, "Cliente no encontrado.")
 
-        if cursor.rowcount == 0: raise HTTPException(404, "Cliente no encontrado.")
+    return dict(fila)
 
-        return None
+@router.delete("/{id}", status_code=204)
+def borrar_cliente(id: int, db: Connection = Depends(get_db)):
+    cursor = db.execute("DELETE FROM Clientes WHERE id=?", (id,))
+    db.commit()
+    if cursor.rowcount == 0: raise HTTPException(404, "Cliente no encontrado.")

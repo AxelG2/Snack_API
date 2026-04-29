@@ -1,77 +1,88 @@
-from ..schemas.pedido_schema import PedidoCreate
-from ..database import conectar
-from fastapi import APIRouter, HTTPException
-from datetime import datetime
-import sqlite3
+from ..schemas.pedido_schema import *
+from ..database import get_db
+from fastapi import APIRouter, HTTPException, Depends
+from sqlite3 import Connection
+from typing import List
 
 router = APIRouter()
 
-@router.post("/pedidos", status_code=201)
-def crear_pedido(pedido: PedidoCreate):
-    with conectar() as conn:
-        try:
-            cliente_id = pedido.cliente_id
-            if not conn.execute("SELECT EXISTS(SELECT 1 FROM Clientes WHERE id = ?)", (cliente_id,)): raise HTTPException(404, "No existe el cliente.")
+@router.post("/", response_model=Pedido, status_code=201)
+def crear_pedido(pedido: PedidoCreate, db: Connection = Depends(get_db)):
+    if not db.execute("SELECT 1 FROM Clientes WHERE id=? LIMIT 1", (pedido.cliente_id,)).fetchone(): raise HTTPException(404, "Cliente no encontrado.")
 
-            total = 0
-            lista_productos = []
+    if not pedido.items: raise HTTPException(400, "El pedido debe tener al menos un item.")
 
-            for producto in pedido.productos:
-                existe_producto = conn.execute("SELECT * FROM Productos WHERE id = ?", (producto.id,)).fetchone()
-                if not existe_producto: raise HTTPException(404, f"No existe el producto {producto.id}.")
+    total = 0.0
+    items_data = []
 
-                stock = existe_producto[3]
-                if stock == 0: print(f"No hay existencia del producto {producto.id}")
+    for item in pedido.items:
+        producto = db.execute("SELECT nombre, precio, stock FROM Productos WHERE id=?", (item.producto_id,)).fetchone()
+        if not producto: raise HTTPException(404, "Producto no encontrado.")
+        if producto['stock'] < item.cantidad: raise HTTPException(409, f"Stock insuficiente para '{producto['nombre']}' (disponible: {producto['stock']}).")
 
-                precio = existe_producto[2]
-                subtotal = precio * producto.cantidad
-                total += subtotal
+        subtotal = producto["precio"] * item.cantidad
+        total += subtotal
 
-                lista_productos.append({**producto.model_dump(), 'subtotal': subtotal})
+        items_data.append({
+            "producto_id": item.producto_id,
+            "cantidad": item.cantidad,
+            "precio_unit": producto['precio']
+        })
 
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO Pedidos (cliente_id, fecha, total) VALUES (?, ?, ?)", (cliente_id, datetime.now(), total,))
+    cursor = db.execute("INSERT INTO Pedidos (cliente_id, total) VALUES (?, ?)", (pedido.cliente_id, total,))
+    id = cursor.lastrowid
 
-            id = cursor.lastrowid
+    for item in items_data:
+        db.execute("INSERT INTO PedidoItems (pedido_id, producto_id, cantidad, precio_unit) VALUES (?, ?, ?, ?)", (id, item['producto_id'], item['cantidad'], item['precio_unit'],))
 
-            for producto in lista_productos:
-                cursor.execute("INSERT INTO DetallePedido (pedido_id, producto_id, cantidad, subtotal) VALUES (?, ?, ?, ?)", (id, producto['id'], producto['cantidad'], producto['subtotal'],))
+        db.execute("UPDATE Productos SET stock=stock-? WHERE id=?", (item['cantidad'], item['producto_id'],))
+    db.commit()
 
-            return {'msg': 'Pedido creado exitosamente.', 'id': id}
-        except Exception as e: raise HTTPException(500, f"Error al guardar: {str(e)}")
+    pedido_creado = dict(db.execute("SELECT * FROM Pedidos WHERE id=?", (id,)).fetchone())
+    pedido_creado = {
+        **pedido_creado, 
+        "items": [dict(i) for i in db.execute("SELECT * FROM PedidoItems WHERE pedido_id=?", (id,)).fetchall()]
+    }
 
-@router.get("/pedidos", status_code=200)
-def obtener_pedidos_por_cliente(cliente_id: int):
-    with conectar() as conn:
-        try:
-            if not conn.execute("SELECT EXISTS(SELECT 1 FROM Clientes WHERE id = ?)", (cliente_id,)): raise HTTPException(404, "No existe el cliente.")
+    return pedido_creado
 
-            query = """
-                SELECT dp.* FROM DetallePedido dp
-                JOIN Pedidos p ON dp.pedido_id = p.id
-                WHERE p.cliente_id = ?
-            """
-            pedidos = conn.execute(query, (cliente_id,)).fetchall()
-            if not pedidos: raise HTTPException(404, "No existen pedidos con este cliente.")
+@router.get("/", response_model=List[PedidoGetAll])
+def listar_todos_los_pedidos(db: Connection = Depends(get_db)):
+    pedidos = db.execute("SELECT * FROM Pedidos ORDER BY id").fetchall()
+    if not pedidos: raise HTTPException(404, "Pedidos no encontrados.")
 
-            return pedidos
-        except sqlite3.Error as e: raise HTTPException(500, f"Error de base de datos: {str(e)}")
-        except HTTPException: raise
-        except Exception as e: raise HTTPException(500, "Error interno inesperado.")
+    return [dict(p) for p in pedidos]
 
-@router.get("/pedidos/{pedido_id}", status_code=200)
-def obtener_pedido(cliente_id: int, pedido_id: int):
-    with conectar() as conn:
-        try:
-            query = """
-                SELECT dp.* FROM DetallePedido dp
-                JOIN Pedidos p ON dp.pedido_id = p.id
-                WHERE p.cliente_id = ? AND p.id = ?
-            """
-            pedido = conn.execute(query, (cliente_id, pedido_id,)).fetchone()
-            if not pedido: raise HTTPException(404, "Pedido no encontrado.")
+@router.get("/cliente/{cliente_id}", response_model=List[PedidoGetAll])
+def listar_pedidos_por_cliente(cliente_id: int, db: Connection = Depends(get_db)):
+    pedidos = db.execute("SELECT * FROM Pedidos WHERE cliente_id ORDER BY id").fetchall()
+    if not pedidos: raise HTTPException(404, "Pedidos no encontrados.")
 
-            return pedido
-        except sqlite3.Error as e: raise HTTPException(500, f"Error de base de datos: {str(e)}")
-        except HTTPException: raise
-        except Exception as e: raise HTTPException(500, "Error interno inesperado.")
+    return [dict(p) for p in pedidos]
+
+@router.get("/{pedido_id}", response_model=Pedido)
+def obtener_pedido(pedido_id: int, db: Connection = Depends(get_db)):
+    pedido = db.execute("SELECT * FROM Pedidos WHERE id=?", (pedido_id,)).fetchone()
+    if not pedido: raise HTTPException(404, "Pedido no encontrado.")
+
+    pedido_items = db.execute("SELECT producto_id, cantidad, (cantidad*precio_unit) AS subtotal FROM PedidoItems WHERE pedido_id=?", (pedido_id,)).fetchall()
+    if not pedido_items: pedido_items = []
+
+    pedido = {**dict(pedido), "items": [dict(i) for i in pedido_items]}
+    return pedido
+
+@router.patch("/{pedido_id}", response_model=Pedido)
+def actualizar_estado(pedido: PedidoEstadoUpdate, db: Connection = Depends(get_db)):
+    if not db.execute("SELECT 1 FROM Pedidos WHERE id=? LIMIT=1", (pedido.id,)).fetchone(): raise HTTPException(404, "Pedido no encontrado.")
+
+    estados = ["pendiente", "enviado", "entregado", "cancelado"]
+    if pedido.estado not in estados: raise HTTPException(400, "Estado no válido.")
+
+    db.execute("UPDATE Pedidos SET estado=? WHERE id=?", (pedido.estado, pedido.id,))
+    if pedido.estado == "cancelado":
+        detalle_pedido = db.execute("SELECT cantidad, producto_id FROM PedidoItem WHERE pedido_id=?", (pedido.id,)).fetchall()
+        db.executemany("UPDATE PedidoItems SET cantidad+=? WHERE producto_id=?", (detalle_pedido,))
+
+    db.commit()
+
+    return dict(db.execute("SELECT * FROM Pedidos WHERE id=?", (pedido.id,)).fetchone())
