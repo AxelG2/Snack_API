@@ -21,7 +21,6 @@ class PedidoCreate(BaseModel):
     items: List[PedidoItemCreate]
 
 class PedidoEstadoUpdate(BaseModel):
-    id: int
     estado: str
 
 class Pedido(BaseModel):
@@ -30,7 +29,7 @@ class Pedido(BaseModel):
     estado: str
     total: float
     creado_en: str
-    items: List[PedidoItem] = []
+    items: List[PedidoItem]
 
 class PedidoGetAll(BaseModel):
     id: int

@@ -41,7 +41,7 @@ def crear_pedido(pedido: PedidoCreate, db: Connection = Depends(get_db)):
     pedido_creado = dict(db.execute("SELECT * FROM Pedidos WHERE id=?", (id,)).fetchone())
     pedido_creado = {
         **pedido_creado, 
-        "items": [dict(i) for i in db.execute("SELECT * FROM PedidoItems WHERE pedido_id=?", (id,)).fetchall()]
+        "items": [dict(i) for i in db.execute("SELECT producto_id, cantidad, (precio_unit*cantidad) AS subtotal FROM PedidoItems WHERE pedido_id=?", (id,)).fetchall()]
     }
 
     return pedido_creado
@@ -55,7 +55,7 @@ def listar_todos_los_pedidos(db: Connection = Depends(get_db)):
 
 @router.get("/cliente/{cliente_id}", response_model=List[PedidoGetAll])
 def listar_pedidos_por_cliente(cliente_id: int, db: Connection = Depends(get_db)):
-    pedidos = db.execute("SELECT * FROM Pedidos WHERE cliente_id ORDER BY id").fetchall()
+    pedidos = db.execute("SELECT * FROM Pedidos WHERE cliente_id=? ORDER BY id", (cliente_id,)).fetchall()
     if not pedidos: raise HTTPException(404, "Pedidos no encontrados.")
 
     return [dict(p) for p in pedidos]
@@ -71,18 +71,31 @@ def obtener_pedido(pedido_id: int, db: Connection = Depends(get_db)):
     pedido = {**dict(pedido), "items": [dict(i) for i in pedido_items]}
     return pedido
 
-@router.patch("/{pedido_id}", response_model=Pedido)
-def actualizar_estado(pedido: PedidoEstadoUpdate, db: Connection = Depends(get_db)):
-    if not db.execute("SELECT 1 FROM Pedidos WHERE id=? LIMIT=1", (pedido.id,)).fetchone(): raise HTTPException(404, "Pedido no encontrado.")
+@router.patch("/{pedido_id}", response_model=PedidoGetAll)
+def actualizar_estado(pedido_id: int, pedido: PedidoEstadoUpdate, db: Connection = Depends(get_db)):
+    if not db.execute("SELECT 1 FROM Pedidos WHERE id=? LIMIT 1", (pedido_id,)).fetchone(): raise HTTPException(404, "Pedido no encontrado.")
 
     estados = ["pendiente", "enviado", "entregado", "cancelado"]
     if pedido.estado not in estados: raise HTTPException(400, "Estado no válido.")
+    if pedido.estado in db.execute("SELECT estado FROM Pedidos WHERE id=?", (pedido_id,)).fetchone(): raise HTTPException(409, "Estado ya seleccionado.")
 
-    db.execute("UPDATE Pedidos SET estado=? WHERE id=?", (pedido.estado, pedido.id,))
+    db.execute("UPDATE Pedidos SET estado=? WHERE id=?", (pedido.estado, pedido_id,))
     if pedido.estado == "cancelado":
-        detalle_pedido = db.execute("SELECT cantidad, producto_id FROM PedidoItem WHERE pedido_id=?", (pedido.id,)).fetchall()
-        db.executemany("UPDATE PedidoItems SET cantidad+=? WHERE producto_id=?", (detalle_pedido,))
+        detalle_pedido = [dict(d) for d in db.execute("SELECT cantidad, producto_id FROM PedidoItems WHERE pedido_id=?", (pedido_id,)).fetchall()]
 
+        # TODO: Arreglar el hecho de que no se actualice al cancelar el pedido.
+        for d in detalle_pedido: 
+            _cantidad = d["cantidad"]
+            _producto_id = d["producto_id"]
+            _cant = dict(db.execute("SELECT * FROM Productos WHERE id=?", (_producto_id,)).fetchone())
+            db.execute("UPDATE PedidoItems SET cantidad=cantidad+? WHERE producto_id=?", (d['cantidad'], d['producto_id'],))
+            _cant_desp = dict(db.execute("SELECT * FROM Productos WHERE id=?", (_producto_id,)).fetchone())
+
+            if _cant == _cant_desp: raise HTTPException("Actualización de stock no relizada.")
     db.commit()
 
-    return dict(db.execute("SELECT * FROM Pedidos WHERE id=?", (pedido.id,)).fetchone())
+    res = dict(db.execute("SELECT * FROM Pedidos WHERE id=?", (pedido_id,)).fetchone())
+
+    return res
+
+# TODO: Eliminar pedido
