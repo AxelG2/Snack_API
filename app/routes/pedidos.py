@@ -1,10 +1,24 @@
-from ..schemas.pedido_schema import *
+from ..schemas.pedido_schema import Pedido, PedidoCreate, PedidoEstadoUpdate, PedidoGetAll
 from ..database import get_db
 from fastapi import APIRouter, HTTPException, Depends
 from sqlite3 import Connection
 from typing import List
 
 router = APIRouter()
+
+def devolver_stock(pedido_id: int, db: Connection):
+    detalle_pedido = [dict(d) for d in db.execute("SELECT cantidad, producto_id FROM PedidoItems WHERE pedido_id=?", (pedido_id,)).fetchall()]
+
+    for detalle in detalle_pedido:
+        _cantidad = dict(db.execute("SELECT stock FROM Productos WHERE id=?", (detalle["producto_id"],)).fetchone())
+
+        db.execute("UPDATE Productos SET stock=stock+? WHERE id=?", (detalle['cantidad'], detalle['producto_id'],))
+
+        _cantidad_actualizada = dict(db.execute("SELECT stock FROM Productos WHERE id=?", (detalle['producto_id'],)).fetchone())
+
+        if _cantidad['stock'] == _cantidad_actualizada['stock']:
+            db.rollback()
+            raise HTTPException(500, f"Actualización de stock no relizada. Producto: {detalle['producto_id']}.")
 
 @router.post("/", response_model=Pedido, status_code=201)
 def crear_pedido(pedido: PedidoCreate, db: Connection = Depends(get_db)):
@@ -73,29 +87,30 @@ def obtener_pedido(pedido_id: int, db: Connection = Depends(get_db)):
 
 @router.patch("/{pedido_id}", response_model=PedidoGetAll)
 def actualizar_estado(pedido_id: int, pedido: PedidoEstadoUpdate, db: Connection = Depends(get_db)):
-    if not db.execute("SELECT 1 FROM Pedidos WHERE id=? LIMIT 1", (pedido_id,)).fetchone(): raise HTTPException(404, "Pedido no encontrado.")
+    estado_actual = db.execute("SELECT estado FROM Pedidos WHERE id=?", (pedido_id,)).fetchone()
+    if not estado_actual: raise HTTPException(404, "Pedido no encontrado.")
 
-    estados = ["pendiente", "enviado", "entregado", "cancelado"]
-    if pedido.estado not in estados: raise HTTPException(400, "Estado no válido.")
-    if pedido.estado in db.execute("SELECT estado FROM Pedidos WHERE id=?", (pedido_id,)).fetchone(): raise HTTPException(409, "Estado ya seleccionado.")
+    if pedido.estado not in ["pendiente", "enviado", "entregado", "cancelado"]: raise HTTPException(400, "Estado no válido.")
+    
+    estado_actual = dict(estado_actual)
+    if estado_actual['estado'] == "cancelado": raise HTTPException(409, f"El pedido está cancelado, ya no se puede cambiar el estado. Pedido: {pedido_id}.")
+
+    if pedido.estado in estado_actual: raise HTTPException(409, "Estado ya seleccionado.")
 
     db.execute("UPDATE Pedidos SET estado=? WHERE id=?", (pedido.estado, pedido_id,))
-    if pedido.estado == "cancelado":
-        detalle_pedido = [dict(d) for d in db.execute("SELECT cantidad, producto_id FROM PedidoItems WHERE pedido_id=?", (pedido_id,)).fetchall()]
-
-        # TODO: Arreglar el hecho de que no se actualice al cancelar el pedido.
-        for d in detalle_pedido: 
-            _cantidad = d["cantidad"]
-            _producto_id = d["producto_id"]
-            _cant = dict(db.execute("SELECT * FROM Productos WHERE id=?", (_producto_id,)).fetchone())
-            db.execute("UPDATE PedidoItems SET cantidad=cantidad+? WHERE producto_id=?", (d['cantidad'], d['producto_id'],))
-            _cant_desp = dict(db.execute("SELECT * FROM Productos WHERE id=?", (_producto_id,)).fetchone())
-
-            if _cant == _cant_desp: raise HTTPException("Actualización de stock no relizada.")
+    if pedido.estado == "cancelado": devolver_stock(pedido_id, db)
     db.commit()
 
     res = dict(db.execute("SELECT * FROM Pedidos WHERE id=?", (pedido_id,)).fetchone())
-
     return res
 
-# TODO: Eliminar pedido
+@router.delete("/{pedido_id}", status_code=204)
+def eliminar_pedido(pedido_id: int, db: Connection = Depends(get_db)):
+    estado = dict(db.execute("SELECT estado FROM Pedidos WHERE id=?", (pedido_id,)).fetchone())
+    if not estado: raise HTTPException(404, "Pedido no encontrado.")
+
+    estado = dict(estado)
+    if estado['estado'] != "cancelado": devolver_stock(pedido_id, db)
+
+    db.execute("DELETE FROM Pedidos WHERE id=?", (pedido_id,))
+    db.commit()
