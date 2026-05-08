@@ -1,7 +1,14 @@
 services:
   api:
     build: .
+    container_name: snack_api
     ports:
       - "0.0.0.0:8000:8000"
     volumes:
-      - ./data:/app/data
+      # - db-data:/data
+      - .:/app
+    environment:
+      - DB_PATH=/snacks.db
+
+volumes:
+  db-data:

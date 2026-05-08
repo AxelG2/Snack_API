@@ -1,8 +1,9 @@
 from .models.database_models import TABLAS
 import sqlite3
 from pathlib import Path
+import os
 
-DB_PATH = Path("data/snacks.db")
+DB_PATH = Path(os.getenv("DB_PATH", "snacks.db"))
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
